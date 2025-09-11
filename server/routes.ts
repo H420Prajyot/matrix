@@ -4,8 +4,9 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { storage } from "./storage";
-import { setupAuth, isAuthenticated } from "./replitAuth";
-import { setupLocalAuth, requireAuth, requireAdmin } from "./localAuth";
+import { setupAuth } from "./replitAuth";
+import { setupLocalAuth } from "./localAuth";
+import { setupUnifiedPassportSerialization, getUserId, unifiedIsAuthenticated } from "./authSession";
 import passport from "passport";
 import { insertProjectSchema, insertVulnerabilitySchema, insertUserSchema } from "@shared/schema";
 
@@ -40,6 +41,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
   setupLocalAuth(app);
+  
+  // Set up unified passport serialization for both auth types
+  setupUnifiedPassportSerialization();
 
   // Development only - simulate login for testing
   if (process.env.NODE_ENV === 'development') {
@@ -75,13 +79,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           });
         }
         
-        // Simulate authenticated session with all required fields
-        const userSession = {
-          claims: { sub: user.id },
-          expires_at: Math.floor(Date.now() / 1000) + (7 * 24 * 60 * 60), // 7 days from now
-          access_token: 'dev-token',
-          refresh_token: 'dev-refresh-token'
-        };
+        // Simulate authenticated session - use the actual user object for local auth
+        const userSession = user;
         
         req.login(userSession, (err: any) => {
           if (err) {
@@ -120,7 +119,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Updated auth routes to handle both OIDC and local auth
-  app.get('/api/auth/user', requireAuth, async (req: any, res) => {
+  app.get('/api/auth/user', unifiedIsAuthenticated, async (req: any, res) => {
     try {
       let userId;
       let user;
@@ -128,7 +127,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Handle both OIDC (with claims) and local auth
       if (req.user.claims) {
         // OIDC authentication
-        userId = req.user.claims.sub;
+        userId = getUserId(req)!;
       } else {
         // Local authentication
         userId = req.user.id;
@@ -147,8 +146,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Admin route to create new users with username/password
-  app.post('/api/admin/create-user', requireAdmin, async (req: any, res) => {
+  app.post('/api/admin/create-user', unifiedIsAuthenticated, async (req: any, res) => {
     try {
+      // Check admin role for this endpoint
+      const currentUser = await storage.getUser(getUserId(req)!);
+      if (currentUser?.role !== 'admin') {
+        return res.status(403).json({ message: "Access denied. Admin role required." });
+      }
+
       const { username, password, email, firstName, lastName, role } = req.body;
       
       if (!username || !password || !role) {
@@ -184,7 +189,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Dashboard statistics
-  app.get('/api/dashboard/stats', isAuthenticated, async (req: any, res) => {
+  app.get('/api/dashboard/stats', unifiedIsAuthenticated, async (req: any, res) => {
     try {
       const stats = await storage.getDashboardStats();
       res.json(stats);
@@ -194,7 +199,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/dashboard/vulnerability-stats', isAuthenticated, async (req: any, res) => {
+  app.get('/api/dashboard/vulnerability-stats', unifiedIsAuthenticated, async (req: any, res) => {
     try {
       const stats = await storage.getVulnerabilityStats();
       res.json(stats);
@@ -205,9 +210,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // User management routes (Admin only)
-  app.get('/api/users', isAuthenticated, async (req: any, res) => {
+  app.get('/api/users', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       if (currentUser?.role !== 'admin') {
         return res.status(403).json({ message: "Access denied. Admin role required." });
       }
@@ -231,9 +236,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/users', isAuthenticated, async (req: any, res) => {
+  app.post('/api/users', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       if (currentUser?.role !== 'admin') {
         return res.status(403).json({ message: "Access denied. Admin role required." });
       }
@@ -243,7 +248,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Create audit log
       await storage.createAuditLog({
-        userId: req.user.claims.sub,
+        userId: getUserId(req)!,
         action: 'created',
         resourceType: 'user',
         resourceId: user.id,
@@ -260,9 +265,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update user
-  app.put('/api/users/:id', isAuthenticated, async (req: any, res) => {
+  app.put('/api/users/:id', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       if (currentUser?.role !== 'admin') {
         return res.status(403).json({ message: "Access denied. Admin role required." });
       }
@@ -279,7 +284,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Create audit log
       await storage.createAuditLog({
-        userId: req.user.claims.sub,
+        userId: getUserId(req)!,
         action: 'updated',
         resourceType: 'user',
         resourceId: user.id,
@@ -296,9 +301,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Delete user
-  app.delete('/api/users/:id', isAuthenticated, async (req: any, res) => {
+  app.delete('/api/users/:id', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       if (currentUser?.role !== 'admin') {
         return res.status(403).json({ message: "Access denied. Admin role required." });
       }
@@ -320,7 +325,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Create audit log
       await storage.createAuditLog({
-        userId: req.user.claims.sub,
+        userId: getUserId(req)!,
         action: 'deleted',
         resourceType: 'user',
         resourceId: userId,
@@ -337,17 +342,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Project routes
-  app.get('/api/projects', isAuthenticated, async (req: any, res) => {
+  app.get('/api/projects', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       let projects;
 
       if (currentUser?.role === 'admin') {
         projects = await storage.getAllProjects();
       } else if (currentUser?.role === 'pentester') {
-        projects = await storage.getProjectsByPentester(req.user.claims.sub);
+        projects = await storage.getProjectsByPentester(getUserId(req)!);
       } else if (currentUser?.role === 'client') {
-        projects = await storage.getProjectsByClient(req.user.claims.sub);
+        projects = await storage.getProjectsByClient(getUserId(req)!);
       } else {
         return res.status(403).json({ message: "Access denied" });
       }
@@ -359,9 +364,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/projects', isAuthenticated, async (req: any, res) => {
+  app.post('/api/projects', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       if (currentUser?.role !== 'admin') {
         return res.status(403).json({ message: "Access denied. Admin role required." });
       }
@@ -371,7 +376,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create audit log
       await storage.createAuditLog({
-        userId: req.user.claims.sub,
+        userId: getUserId(req)!,
         action: 'created',
         resourceType: 'project',
         resourceId: project.id,
@@ -387,20 +392,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/projects/:id', isAuthenticated, async (req: any, res) => {
+  app.get('/api/projects/:id', unifiedIsAuthenticated, async (req: any, res) => {
     try {
       const project = await storage.getProjectById(req.params.id);
       if (!project) {
         return res.status(404).json({ message: "Project not found" });
       }
 
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       
       // Check access permissions
       const hasAccess = 
         currentUser?.role === 'admin' ||
-        (currentUser?.role === 'client' && project.clientId === req.user.claims.sub) ||
-        (currentUser?.role === 'pentester' && project.assignments.some(a => a.pentesterId === req.user.claims.sub));
+        (currentUser?.role === 'client' && project.clientId === getUserId(req)!) ||
+        (currentUser?.role === 'pentester' && project.assignments.some(a => a.pentesterId === getUserId(req)!));
 
       if (!hasAccess) {
         return res.status(403).json({ message: "Access denied" });
@@ -413,9 +418,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/projects/:id/assign', isAuthenticated, async (req: any, res) => {
+  app.post('/api/projects/:id/assign', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       if (currentUser?.role !== 'admin') {
         return res.status(403).json({ message: "Access denied. Admin role required." });
       }
@@ -425,7 +430,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create audit log
       await storage.createAuditLog({
-        userId: req.user.claims.sub,
+        userId: getUserId(req)!,
         action: 'updated',
         resourceType: 'project',
         resourceId: req.params.id,
@@ -441,9 +446,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch('/api/projects/:id/progress', isAuthenticated, async (req: any, res) => {
+  app.patch('/api/projects/:id/progress', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       if (currentUser?.role !== 'pentester') {
         return res.status(403).json({ message: "Access denied. Pentester role required." });
       }
@@ -453,7 +458,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create audit log
       await storage.createAuditLog({
-        userId: req.user.claims.sub,
+        userId: getUserId(req)!,
         action: 'updated',
         resourceType: 'project',
         resourceId: req.params.id,
@@ -470,9 +475,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update project (admin only)
-  app.put('/api/projects/:id', isAuthenticated, async (req: any, res) => {
+  app.put('/api/projects/:id', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       if (currentUser?.role !== 'admin') {
         return res.status(403).json({ message: "Access denied. Admin role required." });
       }
@@ -488,7 +493,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create audit log
       await storage.createAuditLog({
-        userId: req.user.claims.sub,
+        userId: getUserId(req)!,
         action: 'updated',
         resourceType: 'project',
         resourceId: req.params.id,
@@ -509,9 +514,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Delete project (admin only)
-  app.delete('/api/projects/:id', isAuthenticated, async (req: any, res) => {
+  app.delete('/api/projects/:id', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       if (currentUser?.role !== 'admin') {
         return res.status(403).json({ message: "Access denied. Admin role required." });
       }
@@ -526,7 +531,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create audit log
       await storage.createAuditLog({
-        userId: req.user.claims.sub,
+        userId: getUserId(req)!,
         action: 'deleted',
         resourceType: 'project',
         resourceId: req.params.id,
@@ -543,9 +548,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Vulnerability routes
-  app.get('/api/vulnerabilities', isAuthenticated, async (req: any, res) => {
+  app.get('/api/vulnerabilities', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       const { projectId } = req.query;
 
       let vulnerabilities;
@@ -560,14 +565,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         const hasAccess = 
           currentUser?.role === 'admin' ||
-          (currentUser?.role === 'client' && project.clientId === req.user.claims.sub) ||
-          (currentUser?.role === 'pentester' && project.assignments.some(a => a.pentesterId === req.user.claims.sub));
+          (currentUser?.role === 'client' && project.clientId === getUserId(req)!) ||
+          (currentUser?.role === 'pentester' && project.assignments.some(a => a.pentesterId === getUserId(req)!));
 
         if (!hasAccess) {
           return res.status(403).json({ message: "Access denied" });
         }
       } else if (currentUser?.role === 'pentester') {
-        vulnerabilities = await storage.getVulnerabilitiesByPentester(req.user.claims.sub);
+        vulnerabilities = await storage.getVulnerabilitiesByPentester(getUserId(req)!);
       } else {
         return res.status(400).json({ message: "Project ID required for non-pentester users" });
       }
@@ -579,23 +584,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post('/api/vulnerabilities', isAuthenticated, async (req: any, res) => {
+  app.post('/api/vulnerabilities', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       if (currentUser?.role !== 'pentester') {
         return res.status(403).json({ message: "Access denied. Pentester role required." });
       }
 
       const vulnerabilityData = insertVulnerabilitySchema.parse({
         ...req.body,
-        pentesterId: req.user.claims.sub,
+        pentesterId: getUserId(req)!,
       });
 
       const vulnerability = await storage.createVulnerability(vulnerabilityData);
 
       // Create audit log
       await storage.createAuditLog({
-        userId: req.user.claims.sub,
+        userId: getUserId(req)!,
         action: 'created',
         resourceType: 'vulnerability',
         resourceId: vulnerability.id,
@@ -625,9 +630,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Report routes
-  app.post('/api/reports/upload', isAuthenticated, upload.single('report'), async (req: any, res) => {
+  app.post('/api/reports/upload', unifiedIsAuthenticated, upload.single('report'), async (req: any, res) => {
     try {
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       if (currentUser?.role !== 'pentester') {
         return res.status(403).json({ message: "Access denied. Pentester role required." });
       }
@@ -646,7 +651,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const reportData = {
         projectId,
-        pentesterId: req.user.claims.sub,
+        pentesterId: getUserId(req)!,
         filename: req.file.filename,
         originalName: req.file.originalname,
         fileSize: req.file.size,
@@ -659,7 +664,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Create audit log
       await storage.createAuditLog({
-        userId: req.user.claims.sub,
+        userId: getUserId(req)!,
         action: 'created',
         resourceType: 'report',
         resourceId: report.id,
@@ -688,20 +693,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/reports/:projectId', isAuthenticated, async (req: any, res) => {
+  app.get('/api/reports/:projectId', unifiedIsAuthenticated, async (req: any, res) => {
     try {
       const project = await storage.getProjectById(req.params.projectId);
       if (!project) {
         return res.status(404).json({ message: "Project not found" });
       }
 
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       
       // Check access permissions
       const hasAccess = 
         currentUser?.role === 'admin' ||
-        (currentUser?.role === 'client' && project.clientId === req.user.claims.sub) ||
-        (currentUser?.role === 'pentester' && project.assignments.some(a => a.pentesterId === req.user.claims.sub));
+        (currentUser?.role === 'client' && project.clientId === getUserId(req)!) ||
+        (currentUser?.role === 'pentester' && project.assignments.some(a => a.pentesterId === getUserId(req)!));
 
       if (!hasAccess) {
         return res.status(403).json({ message: "Access denied" });
@@ -715,10 +720,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/reports/download/:reportId', isAuthenticated, async (req: any, res) => {
+  app.get('/api/reports/download/:reportId', unifiedIsAuthenticated, async (req: any, res) => {
     try {
       const { reportId } = req.params;
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       
       if (!currentUser) {
         return res.status(404).json({ message: "User not found" });
@@ -783,9 +788,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Notification routes
-  app.get('/api/notifications', isAuthenticated, async (req: any, res) => {
+  app.get('/api/notifications', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const notifications = await storage.getNotificationsByUser(req.user.claims.sub);
+      const notifications = await storage.getNotificationsByUser(getUserId(req)!);
       res.json(notifications);
     } catch (error) {
       console.error("Error fetching notifications:", error);
@@ -793,7 +798,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch('/api/notifications/:id/read', isAuthenticated, async (req: any, res) => {
+  app.patch('/api/notifications/:id/read', unifiedIsAuthenticated, async (req: any, res) => {
     try {
       const notification = await storage.markNotificationAsRead(req.params.id);
       res.json(notification);
@@ -803,9 +808,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get('/api/notifications/unread-count', isAuthenticated, async (req: any, res) => {
+  app.get('/api/notifications/unread-count', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const count = await storage.getUnreadNotificationCount(req.user.claims.sub);
+      const count = await storage.getUnreadNotificationCount(getUserId(req)!);
       res.json({ count });
     } catch (error) {
       console.error("Error fetching unread notification count:", error);
@@ -814,9 +819,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Audit log routes (Admin only)
-  app.get('/api/audit-logs', isAuthenticated, async (req: any, res) => {
+  app.get('/api/audit-logs', unifiedIsAuthenticated, async (req: any, res) => {
     try {
-      const currentUser = await storage.getUser(req.user.claims.sub);
+      const currentUser = await storage.getUser(getUserId(req)!);
       if (currentUser?.role !== 'admin') {
         return res.status(403).json({ message: "Access denied. Admin role required." });
       }

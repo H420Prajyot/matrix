@@ -524,14 +524,23 @@ export default function AdminDashboard() {
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <h2 className="text-2xl font-bold text-foreground">User Management</h2>
-                <Button 
-                  className="bg-primary text-primary-foreground" 
-                  data-testid="button-add-user"
-                  onClick={handleAddUser}
-                >
-                  <UserPlus className="w-4 h-4 mr-2" />
-                  Add User
-                </Button>
+                <div className="flex space-x-3">
+                  <Button 
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white" 
+                    onClick={() => setActiveSection('create-user')}
+                  >
+                    <UserPlus className="w-4 h-4 mr-2" />
+                    Create User (Username/Password)
+                  </Button>
+                  <Button 
+                    className="bg-primary text-primary-foreground" 
+                    data-testid="button-add-user"
+                    onClick={handleAddUser}
+                  >
+                    <UserPlus className="w-4 h-4 mr-2" />
+                    Add User (OIDC)
+                  </Button>
+                </div>
               </div>
 
               {/* User Stats */}
@@ -979,8 +988,34 @@ export default function AdminDashboard() {
             </div>
           )}
 
+          {/* Create User Section */}
+          {activeSection === 'create-user' && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold text-foreground">Create Username/Password User</h2>
+                <Button 
+                  variant="outline"
+                  onClick={() => setActiveSection('users')}
+                >
+                  Back to User Management
+                </Button>
+              </div>
+              <div className="max-w-2xl">
+                <Card>
+                  <CardContent className="p-6">
+                    <p className="text-muted-foreground mb-6">
+                      Create new pentester or client accounts with username and password credentials. 
+                      These accounts will use local authentication instead of SSO.
+                    </p>
+                    <CreateUserForm />
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
+          )}
+
           {/* Other sections can be added here */}
-          {activeSection !== 'overview' && activeSection !== 'users' && activeSection !== 'projects' && (
+          {activeSection !== 'overview' && activeSection !== 'users' && activeSection !== 'projects' && activeSection !== 'create-user' && (
             <div className="text-center py-12">
               <h2 className="text-2xl font-bold text-foreground mb-4">
                 {activeSection.charAt(0).toUpperCase() + activeSection.slice(1)} Section

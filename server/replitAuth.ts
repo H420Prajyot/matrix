@@ -7,6 +7,7 @@ import type { Express, RequestHandler } from "express";
 import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { storage } from "./storage";
+import { createOIDCUser } from "./authSession";
 
 // Extend the session interface to include intendedRole
 declare module 'express-session' {
@@ -51,15 +52,6 @@ export function getSession() {
   });
 }
 
-function updateUserSession(
-  user: any,
-  tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers
-) {
-  user.claims = tokens.claims();
-  user.access_token = tokens.access_token;
-  user.refresh_token = tokens.refresh_token;
-  user.expires_at = user.claims?.exp;
-}
 
 async function upsertUser(
   claims: any,
@@ -119,8 +111,7 @@ export async function setupAuth(app: Express) {
     tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers,
     verified: passport.AuthenticateCallback
   ) => {
-    const user = {};
-    updateUserSession(user, tokens);
+    const user = createOIDCUser(tokens);
     verified(null, user);
   };
 
@@ -135,8 +126,7 @@ export async function setupAuth(app: Express) {
         passReqToCallback: true,
       },
       async (req: any, tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers, verified: passport.AuthenticateCallback) => {
-        const user = {};
-        updateUserSession(user, tokens);
+        const user = createOIDCUser(tokens);
         // Get intended role from session if it exists
         const intendedRole = req.session?.intendedRole;
         await upsertUser(tokens.claims(), intendedRole);
@@ -150,8 +140,6 @@ export async function setupAuth(app: Express) {
     passport.use(strategy);
   }
 
-  passport.serializeUser((user: Express.User, cb) => cb(null, user));
-  passport.deserializeUser((user: Express.User, cb) => cb(null, user));
 
   // Role-specific login endpoints
   app.get("/api/login", (req, res, next) => {

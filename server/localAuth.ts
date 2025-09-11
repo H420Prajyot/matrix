@@ -36,20 +36,6 @@ export function setupLocalAuth(app: Express) {
     )
   );
 
-  // Serialize user for session
-  passport.serializeUser((user: any, done) => {
-    done(null, user.id);
-  });
-
-  // Deserialize user from session
-  passport.deserializeUser(async (id: string, done) => {
-    try {
-      const user = await storage.getUser(id);
-      done(null, user);
-    } catch (error) {
-      done(error, null);
-    }
-  });
 }
 
 // Middleware to check if user is authenticated for local auth
