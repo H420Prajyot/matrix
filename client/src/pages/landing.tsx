@@ -1,12 +1,31 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Shield, Bug, Building } from "lucide-react";
+import LocalLoginForm from "@/components/LocalLoginForm";
 
 export default function Landing() {
+  const [showLocalLogin, setShowLocalLogin] = useState<'pentester' | 'client' | null>(null);
+
   const handleRoleLogin = (role: string) => {
     // Redirect to role-specific login endpoint
     window.location.href = `/api/login/${role}`;
   };
+
+  const handleLocalLogin = (role: 'pentester' | 'client') => {
+    setShowLocalLogin(role);
+  };
+
+  if (showLocalLogin) {
+    return (
+      <div className="min-h-screen flex items-center justify-center gradient-bg p-4">
+        <LocalLoginForm 
+          userType={showLocalLogin} 
+          onBack={() => setShowLocalLogin(null)}
+        />
+      </div>
+    );
+  }
 
   const handleDevLogin = async (userId: string) => {
     try {
@@ -62,39 +81,53 @@ export default function Landing() {
             </svg>
           </Button>
 
-          <Button
-            onClick={() => handleRoleLogin('pentester')}
-            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-6 px-6 h-auto justify-between group"
-            data-testid="button-pentester-login"
-          >
+          <div className="space-y-3">
             <div className="flex items-center">
-              <Bug className="h-5 w-5 mr-3" />
-              <div className="text-left">
-                <div className="font-semibold">Penetration Tester</div>
-                <div className="text-sm opacity-90">Upload reports & manage vulnerabilities</div>
-              </div>
+              <Bug className="h-5 w-5 mr-3 text-emerald-600" />
+              <span className="font-semibold text-foreground">Penetration Tester</span>
             </div>
-            <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </Button>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                onClick={() => handleLocalLogin('pentester')}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                size="sm"
+              >
+                Username/Password
+              </Button>
+              <Button
+                onClick={() => handleRoleLogin('pentester')}
+                variant="outline"
+                size="sm"
+                className="border-emerald-600 text-emerald-600 hover:bg-emerald-50"
+              >
+                SSO Login
+              </Button>
+            </div>
+          </div>
 
-          <Button
-            onClick={() => handleRoleLogin('client')}
-            className="w-full bg-slate-600 hover:bg-slate-700 text-white font-medium py-6 px-6 h-auto justify-between group"
-            data-testid="button-client-login"
-          >
+          <div className="space-y-3">
             <div className="flex items-center">
-              <Building className="h-5 w-5 mr-3" />
-              <div className="text-left">
-                <div className="font-semibold">Client</div>
-                <div className="text-sm opacity-90">View project status & download reports</div>
-              </div>
+              <Building className="h-5 w-5 mr-3 text-slate-600" />
+              <span className="font-semibold text-foreground">Client</span>
             </div>
-            <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-            </svg>
-          </Button>
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                onClick={() => handleLocalLogin('client')}
+                className="bg-slate-600 hover:bg-slate-700 text-white"
+                size="sm"
+              >
+                Username/Password
+              </Button>
+              <Button
+                onClick={() => handleRoleLogin('client')}
+                variant="outline"
+                size="sm"
+                className="border-slate-600 text-slate-600 hover:bg-slate-50"
+              >
+                SSO Login
+              </Button>
+            </div>
+          </div>
         </div>
 
         {/* Development Testing Buttons */}

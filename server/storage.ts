@@ -25,11 +25,17 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, count, sql } from "drizzle-orm";
+import bcrypt from "bcryptjs";
 
 export interface IStorage {
   // User operations (required for Replit Auth)
   getUser(id: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
+  
+  // Local authentication operations
+  getUserByUsername(username: string): Promise<User | undefined>;
+  validatePassword(user: User, password: string): Promise<boolean>;
+  createUserWithPassword(userData: { username: string; password: string; email?: string; firstName?: string; lastName?: string; role: 'admin' | 'pentester' | 'client' }): Promise<User>;
   
   // User management operations
   createUser(user: InsertUser): Promise<User>;
@@ -98,6 +104,33 @@ export class DatabaseStorage implements IStorage {
           ...userData,
           updatedAt: new Date(),
         },
+      })
+      .returning();
+    return user;
+  }
+
+  // Local authentication methods
+  async getUserByUsername(username: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user;
+  }
+
+  async validatePassword(user: User, password: string): Promise<boolean> {
+    if (!user.password) return false;
+    return await bcrypt.compare(password, user.password);
+  }
+
+  async createUserWithPassword(userData: { username: string; password: string; email?: string; firstName?: string; lastName?: string; role: 'admin' | 'pentester' | 'client' }): Promise<User> {
+    const hashedPassword = await bcrypt.hash(userData.password, 12);
+    const [user] = await db
+      .insert(users)
+      .values({
+        username: userData.username,
+        password: hashedPassword,
+        email: userData.email,
+        firstName: userData.firstName,
+        lastName: userData.lastName,
+        role: userData.role,
       })
       .returning();
     return user;

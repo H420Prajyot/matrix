@@ -5,6 +5,8 @@ import path from "path";
 import fs from "fs";
 import { storage } from "./storage";
 import { setupAuth, isAuthenticated } from "./replitAuth";
+import { setupLocalAuth, requireAuth, requireAdmin } from "./localAuth";
+import passport from "passport";
 import { insertProjectSchema, insertVulnerabilitySchema, insertUserSchema } from "@shared/schema";
 
 // Configure multer for file uploads
@@ -37,6 +39,7 @@ const upload = multer({
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
+  setupLocalAuth(app);
 
   // Development only - simulate login for testing
   if (process.env.NODE_ENV === 'development') {
@@ -97,15 +100,86 @@ export async function registerRoutes(app: Express): Promise<Server> {
     app.post('/api/dev-login', handleDevLogin);
   }
 
-  // Auth routes
-  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
+  // Local username/password authentication routes
+  app.post('/api/local-login', (req, res, next) => {
+    passport.authenticate('local', (err: any, user: any, info: any) => {
+      if (err) {
+        return res.status(500).json({ message: 'Authentication error' });
+      }
+      if (!user) {
+        return res.status(401).json({ message: info?.message || 'Invalid credentials' });
+      }
+      
+      req.login(user, (err: any) => {
+        if (err) {
+          return res.status(500).json({ message: 'Login failed' });
+        }
+        res.json({ message: 'Login successful', user: { id: user.id, username: user.username, role: user.role, firstName: user.firstName, lastName: user.lastName } });
+      });
+    })(req, res, next);
+  });
+
+  // Updated auth routes to handle both OIDC and local auth
+  app.get('/api/auth/user', requireAuth, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
+      let userId;
+      let user;
+      
+      // Handle both OIDC (with claims) and local auth
+      if (req.user.claims) {
+        // OIDC authentication
+        userId = req.user.claims.sub;
+      } else {
+        // Local authentication
+        userId = req.user.id;
+      }
+      
+      user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      
       res.json(user);
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
+
+  // Admin route to create new users with username/password
+  app.post('/api/admin/create-user', requireAdmin, async (req: any, res) => {
+    try {
+      const { username, password, email, firstName, lastName, role } = req.body;
+      
+      if (!username || !password || !role) {
+        return res.status(400).json({ message: 'Username, password, and role are required' });
+      }
+      
+      if (!['pentester', 'client'].includes(role)) {
+        return res.status(400).json({ message: 'Role must be pentester or client' });
+      }
+
+      // Check if username already exists
+      const existingUser = await storage.getUserByUsername(username);
+      if (existingUser) {
+        return res.status(409).json({ message: 'Username already exists' });
+      }
+
+      const newUser = await storage.createUserWithPassword({
+        username,
+        password,
+        email,
+        firstName,
+        lastName,
+        role: role as 'pentester' | 'client',
+      });
+
+      // Don't return the password hash
+      const { password: _, ...userWithoutPassword } = newUser;
+      res.status(201).json({ message: 'User created successfully', user: userWithoutPassword });
+    } catch (error) {
+      console.error("Error creating user:", error);
+      res.status(500).json({ message: "Failed to create user" });
     }
   });
 

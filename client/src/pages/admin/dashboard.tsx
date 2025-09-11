@@ -7,6 +7,7 @@ import Header from "@/components/layout/header";
 import Sidebar from "@/components/layout/sidebar";
 import UserManagementModals from "@/components/admin/UserManagementModals";
 import ProjectManagementModals from "@/components/admin/ProjectManagementModals";
+import CreateUserForm from "@/components/admin/CreateUserForm";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
