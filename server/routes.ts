@@ -40,13 +40,38 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Development only - simulate login for testing
   if (process.env.NODE_ENV === 'development') {
-    app.post('/api/dev-login', async (req, res) => {
+    const handleDevLogin = async (req: any, res: any) => {
       try {
-        const { userId } = req.body;
-        const user = await storage.getUser(userId);
+        const userId = req.body?.userId || req.query?.userId || 'dev-user';
+        const role = req.body?.role || req.query?.role;
+        
+        let user = await storage.getUser(userId);
         if (!user) {
-          return res.status(404).json({ message: 'User not found' });
+          // Check if this is the first user (make them admin)
+          const existingUsers = await storage.getUsersByRole('admin');
+          const isFirstUser = existingUsers.length === 0;
+          
+          // Determine the role based on intended role or fallback logic
+          let userRole: 'admin' | 'pentester' | 'client';
+          if (role && ['admin', 'pentester', 'client'].includes(role)) {
+            userRole = role as 'admin' | 'pentester' | 'client';
+          } else if (isFirstUser) {
+            userRole = 'admin';
+          } else {
+            userRole = 'client';
+          }
+          
+          // Create new user
+          user = await storage.upsertUser({
+            id: userId,
+            email: `${userId}@dev.local`,
+            firstName: 'Dev',
+            lastName: 'User',
+            profileImageUrl: null,
+            role: userRole,
+          });
         }
+        
         // Simulate authenticated session with all required fields
         const userSession = {
           claims: { sub: user.id },
@@ -54,9 +79,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           access_token: 'dev-token',
           refresh_token: 'dev-refresh-token'
         };
-        req.login(userSession, (err) => {
+        
+        req.login(userSession, (err: any) => {
           if (err) {
-            return res.status(500).json({ message: 'Login failed' });
+            console.error('Dev login session error:', err);
+            return res.status(500).json({ message: 'Login session failed' });
           }
           res.json({ message: 'Login successful', user });
         });
@@ -64,7 +91,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('Dev login error:', error);
         res.status(500).json({ message: 'Login failed' });
       }
-    });
+    };
+
+    app.get('/api/dev-login', handleDevLogin);
+    app.post('/api/dev-login', handleDevLogin);
   }
 
   // Auth routes

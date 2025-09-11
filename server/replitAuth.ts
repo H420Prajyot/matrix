@@ -34,7 +34,7 @@ export function getSession() {
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
     conString: process.env.DATABASE_URL,
-    createTableIfMissing: false,
+    createTableIfMissing: true,
     ttl: sessionTtl,
     tableName: "sessions",
   });
@@ -45,7 +45,7 @@ export function getSession() {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: true,
+      secure: process.env.NODE_ENV === 'production',
       maxAge: sessionTtl,
     },
   });
@@ -65,22 +65,40 @@ async function upsertUser(
   claims: any,
   intendedRole?: 'admin' | 'pentester' | 'client'
 ) {
-  // Check if this is the first user (make them admin)
+  const userId = claims["sub"];
+  
+  // Check if user already exists
+  const existingUser = await storage.getUser(userId);
+  if (existingUser) {
+    // Update user information but keep existing role (security: prevent privilege escalation)
+    await storage.upsertUser({
+      id: userId,
+      email: claims["email"],
+      firstName: claims["first_name"],
+      lastName: claims["last_name"],
+      profileImageUrl: claims["profile_image_url"],
+      role: existingUser.role, // Keep existing role
+    });
+    return;
+  }
+  
+  // This is a new user - determine role
   const existingUsers = await storage.getUsersByRole('admin');
   const isFirstUser = existingUsers.length === 0;
   
-  // Determine the role based on intended role or fallback logic
+  // Only allow role selection for first user or when no admins exist
   let role: 'admin' | 'pentester' | 'client';
-  if (intendedRole) {
-    role = intendedRole;
-  } else if (isFirstUser) {
+  if (isFirstUser) {
     role = 'admin';
+  } else if (intendedRole && ['admin', 'pentester', 'client'].includes(intendedRole)) {
+    // Only allow role selection for new users in development
+    role = process.env.NODE_ENV === 'development' ? intendedRole : 'client';
   } else {
     role = 'client';
   }
   
   await storage.upsertUser({
-    id: claims["sub"],
+    id: userId,
     email: claims["email"],
     firstName: claims["first_name"],
     lastName: claims["last_name"],
